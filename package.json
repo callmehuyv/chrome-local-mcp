@@ -1,0 +1,29 @@
+{
+  "name": "chrome-local-mcp",
+  "version": "1.0.0",
+  "description": "A local Chrome browser automation MCP server powered by Puppeteer for Claude Code",
+  "main": "mcp-server.js",
+  "bin": {
+    "chrome-local-mcp": "./mcp-server.js"
+  },
+  "scripts": {
+    "start": "node mcp-server.js",
+    "server": "node server.js"
+  },
+  "keywords": [
+    "mcp",
+    "puppeteer",
+    "chrome",
+    "browser-automation",
+    "claude-code",
+    "model-context-protocol"
+  ],
+  "author": "callmehuyv",
+  "license": "MIT",
+  "type": "commonjs",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "express": "^5.2.1",
+    "puppeteer": "^24.38.0"
+  }
+}
