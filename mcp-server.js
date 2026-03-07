@@ -3,6 +3,37 @@ const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
 const { StdioServerTransport } = require('@modelcontextprotocol/sdk/server/stdio.js');
 const { z } = require('zod');
 const puppeteer = require('puppeteer');
+const path = require('path');
+const os = require('os');
+const { execFile } = require('child_process');
+
+const USER_DATA_DIR = path.join(os.homedir(), '.chrome-local-mcp-profile');
+
+// Local OCR using Apple Vision framework (macOS only)
+function localOCR(imagePath) {
+  return new Promise((resolve, reject) => {
+    const script = `
+import Vision, sys
+from Foundation import NSURL
+
+url = NSURL.fileURLWithPath_(sys.argv[1])
+req = Vision.VNRecognizeTextRequest.alloc().init()
+req.setRecognitionLevel_(0)
+req.setRecognitionLanguages_(["en", "vi"])
+handler = Vision.VNImageRequestHandler.alloc().initWithURL_options_(url, None)
+ok, err = handler.performRequests_error_([req], None)
+if not ok:
+    print("OCR_ERROR: " + str(err), file=sys.stderr)
+    sys.exit(1)
+for r in req.results():
+    print(r.text())
+`;
+    execFile('python3', ['-c', script, imagePath], { timeout: 15000 }, (err, stdout, stderr) => {
+      if (err) return reject(new Error(`OCR failed: ${stderr || err.message}`));
+      resolve(stdout.trim());
+    });
+  });
+}
 
 let browser = null;
 let pages = {};
@@ -29,6 +60,7 @@ server.tool('launch', 'Launch Chrome browser', {
   browser = await puppeteer.launch({
     headless: headless ? 'new' : false,
     defaultViewport: null,
+    userDataDir: USER_DATA_DIR,
     args: ['--window-size=1440,900', '--no-sandbox'],
   });
   pages = {};
@@ -127,21 +159,38 @@ server.tool('press_key', 'Press a keyboard key', {
   return { content: [{ type: 'text', text: `Pressed ${key}` }] };
 });
 
-// Screenshot
-server.tool('screenshot', 'Take a screenshot', {
+// Screenshot (with optional local OCR to save tokens)
+server.tool('screenshot', 'Take a screenshot. Use ocr=true to extract text locally instead of sending the image (saves tokens)', {
   pageId: z.number().describe('Page ID'),
   path: z.string().optional().describe('File path to save (default: /tmp/screenshot-<timestamp>.png)'),
   fullPage: z.boolean().optional().describe('Capture full page'),
-}, async ({ pageId, path, fullPage }) => {
+  ocr: z.boolean().optional().describe('Run local OCR and return text instead of image (saves tokens)'),
+}, async ({ pageId, path, fullPage, ocr }) => {
   const page = getPage(pageId);
   const filePath = path || `/tmp/screenshot-${Date.now()}.png`;
   const buffer = await page.screenshot({ path: filePath, fullPage: fullPage || false, encoding: 'base64' });
+  if (ocr) {
+    const text = await localOCR(filePath);
+    return {
+      content: [
+        { type: 'text', text: `Screenshot saved to ${filePath}\n\n--- OCR Text (local Vision) ---\n${text}` },
+      ],
+    };
+  }
   return {
     content: [
       { type: 'text', text: `Screenshot saved to ${filePath}` },
       { type: 'image', data: buffer, mimeType: 'image/png' },
     ],
   };
+});
+
+// OCR - extract text from any image using local Apple Vision
+server.tool('ocr', 'Extract text from an image file using local Apple Vision OCR (no tokens sent to cloud)', {
+  imagePath: z.string().describe('Absolute path to the image file'),
+}, async ({ imagePath }) => {
+  const text = await localOCR(imagePath);
+  return { content: [{ type: 'text', text: text || '(no text detected)' }] };
 });
 
 // Get page text

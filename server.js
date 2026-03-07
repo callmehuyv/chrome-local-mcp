@@ -1,5 +1,9 @@
 const express = require('express');
 const puppeteer = require('puppeteer');
+const path = require('path');
+const os = require('os');
+
+const USER_DATA_DIR = path.join(os.homedir(), '.chrome-local-mcp-profile');
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));
@@ -16,6 +20,7 @@ async function launchBrowser(headless = false) {
   browser = await puppeteer.launch({
     headless: headless ? 'new' : false,
     defaultViewport: null,
+    userDataDir: USER_DATA_DIR,
     args: ['--window-size=1440,900', '--no-sandbox'],
   });
   pages = {};
