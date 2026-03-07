@@ -44,7 +44,8 @@ Start a new Claude Code session. The `mcp__chrome_local__*` tools will be availa
 | `click` | Click by CSS selector, text content, or x/y coordinates |
 | `type` | Type text into an input field (with optional clear) |
 | `press_key` | Press a keyboard key (Enter, Tab, Escape, etc.) |
-| `screenshot` | Take a screenshot (returns image to Claude) |
+| `screenshot` | Take a screenshot (returns image to Claude, or use `ocr: true` for local text extraction) |
+| `ocr` | Extract text from any image file using local Apple Vision OCR (no cloud tokens) |
 | `get_text` | Get text content of the page or a specific element |
 | `get_links` | Get all links on the page |
 | `get_inputs` | Get all form inputs on the page |
@@ -136,6 +137,32 @@ curl -X POST http://localhost:3033/launch \
 ### Window Size
 
 Default window size is 1440x900. To change it, edit `mcp-server.js` and modify the `--window-size` arg in the `launch` tool.
+
+## Local OCR (macOS)
+
+The `screenshot` tool supports an `ocr` parameter that runs text extraction locally using Apple's Vision framework instead of sending the image to Claude. This saves significant token costs when you only need the text content.
+
+```
+> Take a screenshot with OCR (no image sent to Claude)
+> screenshot(pageId: 1, ocr: true)
+```
+
+The standalone `ocr` tool can also extract text from any image file on disk:
+
+```
+> OCR this image: /tmp/my-image.png
+```
+
+**Requirements for OCR:**
+- macOS (uses Apple Vision framework)
+- Python 3 with `pyobjc-framework-Vision` and `pyobjc-framework-Quartz`:
+  ```bash
+  pip3 install pyobjc-framework-Vision pyobjc-framework-Quartz
+  ```
+
+**When to use what:**
+- `ocr: true` — You only need the text from the page (fast, free)
+- Default screenshot — You need Claude to understand layout, visuals, or context (costs vision tokens)
 
 ## Requirements
 
