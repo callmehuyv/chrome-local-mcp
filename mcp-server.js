@@ -282,7 +282,7 @@ server.tool('press_key', 'Press a keyboard key', {
 });
 
 // Snapshot — accessibility tree with element refs (cheapest way to understand a page)
-server.tool('snapshot', 'Get page accessibility snapshot with element refs. Returns structured text — much cheaper than screenshots. Use refs with click/type/select tools.', {
+server.tool('snapshot', 'PREFERRED: Use this FIRST to understand page content. Returns accessibility tree with interactive element refs. Much cheaper than screenshots (text only, no vision tokens). Use refs with click_ref/type_ref. Only use screenshot if you need visual/layout context that the snapshot cannot provide.', {
   pageId: z.number().describe('Page ID'),
 }, async ({ pageId }) => {
   const page = getPage(pageId);
@@ -327,7 +327,7 @@ server.tool('type_ref', 'Type text into an element by its ref from a snapshot. M
 });
 
 // Screenshot (with optional local OCR to save tokens)
-server.tool('screenshot', 'Take a screenshot. Use ocr=true to extract text locally instead of sending the image (saves tokens)', {
+server.tool('screenshot', 'Take a screenshot. IMPORTANT: Prefer snapshot tool first — it is cheaper (no vision tokens). Only use screenshot when you need visual context (layout, images, colors) that snapshot cannot provide. Use ocr=true to extract text locally instead of sending the image.', {
   pageId: z.number().describe('Page ID'),
   path: z.string().optional().describe('File path to save (default: /tmp/screenshot-<timestamp>.png)'),
   fullPage: z.boolean().optional().describe('Capture full page'),
@@ -453,7 +453,7 @@ server.tool('select', 'Select a dropdown option', {
 });
 
 // Batch — run multiple actions in one call
-server.tool('batch', 'Run multiple actions sequentially in one call. Each action is { action, params }. Saves round trips.', {
+server.tool('batch', 'Run multiple actions sequentially in one call. Saves round trips. Use snapshot first to get refs, then batch actions using those refs.', {
   pageId: z.number().describe('Page ID'),
   delayBetween: z.number().optional().describe('Delay in ms between each action (default: 100)'),
   actions: z.array(z.object({
