@@ -168,7 +168,8 @@ server.tool('screenshot', 'Take a screenshot. Use ocr=true to extract text local
 }, async ({ pageId, path, fullPage, ocr }) => {
   const page = getPage(pageId);
   const filePath = path || `/tmp/screenshot-${Date.now()}.png`;
-  const buffer = await page.screenshot({ path: filePath, fullPage: fullPage || false, encoding: 'base64' });
+  // Save to file (binary) — do NOT mix with encoding: 'base64' or the file gets corrupted
+  await page.screenshot({ path: filePath, fullPage: fullPage || false });
   if (ocr) {
     const text = await localOCR(filePath);
     return {
@@ -177,10 +178,13 @@ server.tool('screenshot', 'Take a screenshot. Use ocr=true to extract text local
       ],
     };
   }
+  // Read back as base64 for returning the image to Claude
+  const fs = require('fs');
+  const base64 = fs.readFileSync(filePath).toString('base64');
   return {
     content: [
       { type: 'text', text: `Screenshot saved to ${filePath}` },
-      { type: 'image', data: buffer, mimeType: 'image/png' },
+      { type: 'image', data: base64, mimeType: 'image/png' },
     ],
   };
 });
