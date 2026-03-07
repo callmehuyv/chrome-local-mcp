@@ -452,6 +452,95 @@ server.tool('select', 'Select a dropdown option', {
   return { content: [{ type: 'text', text: `Selected ${value}` }] };
 });
 
+// Batch — run multiple actions in one call
+server.tool('batch', 'Run multiple actions sequentially in one call. Each action is { action, params }. Saves round trips.', {
+  pageId: z.number().describe('Page ID'),
+  delayBetween: z.number().optional().describe('Delay in ms between each action (default: 100)'),
+  actions: z.array(z.object({
+    action: z.enum(['click', 'type', 'press_key', 'select', 'scroll', 'wait_for', 'navigate']).describe('Action to perform'),
+    selector: z.string().optional().describe('CSS selector'),
+    ref: z.string().optional().describe('Element ref from snapshot'),
+    text: z.string().optional().describe('Text to type, or key to press, or URL to navigate'),
+    value: z.string().optional().describe('Value for select'),
+    clear: z.boolean().optional().describe('Clear field before typing'),
+    x: z.number().optional().describe('X coordinate or horizontal scroll'),
+    y: z.number().optional().describe('Y coordinate or vertical scroll'),
+    delay: z.number().optional().describe('Delay in ms (for type keystroke delay, or wait_for timeout)'),
+  })).describe('Array of actions to run sequentially'),
+}, async ({ pageId, delayBetween, actions }) => {
+  const gap = delayBetween ?? 100;
+  const page = getPage(pageId);
+  const results = [];
+
+  for (let i = 0; i < actions.length; i++) {
+    const a = actions[i];
+    try {
+      switch (a.action) {
+        case 'click':
+          if (a.ref) {
+            const el = await resolveRef(page, pageId, a.ref);
+            await el.click();
+            results.push(`${i + 1}. Clicked ref ${a.ref}`);
+          } else if (a.x !== undefined && a.y !== undefined) {
+            await page.mouse.click(a.x, a.y);
+            results.push(`${i + 1}. Clicked (${a.x}, ${a.y})`);
+          } else if (a.selector) {
+            await page.click(a.selector);
+            results.push(`${i + 1}. Clicked ${a.selector}`);
+          }
+          break;
+        case 'type':
+          if (a.ref) {
+            const el = await resolveRef(page, pageId, a.ref);
+            if (a.clear) { await el.click({ clickCount: 3 }); await page.keyboard.press('Backspace'); }
+            await el.type(a.text || '', { delay: a.delay || 50 });
+            results.push(`${i + 1}. Typed into ref ${a.ref}`);
+          } else if (a.selector) {
+            if (a.clear) { await page.click(a.selector, { clickCount: 3 }); await page.keyboard.press('Backspace'); }
+            await page.type(a.selector, a.text || '', { delay: a.delay || 50 });
+            results.push(`${i + 1}. Typed into ${a.selector}`);
+          }
+          break;
+        case 'press_key':
+          await page.keyboard.press(a.text || 'Enter');
+          results.push(`${i + 1}. Pressed ${a.text || 'Enter'}`);
+          break;
+        case 'select':
+          if (a.selector && a.value) {
+            await page.select(a.selector, a.value);
+            results.push(`${i + 1}. Selected ${a.value} in ${a.selector}`);
+          }
+          break;
+        case 'scroll':
+          await page.evaluate((sx, sy) => window.scrollBy(sx, sy), a.x || 0, a.y || 500);
+          results.push(`${i + 1}. Scrolled`);
+          break;
+        case 'wait_for':
+          if (a.selector) {
+            await page.waitForSelector(a.selector, { timeout: a.delay || 10000, visible: true });
+            results.push(`${i + 1}. Found ${a.selector}`);
+          }
+          break;
+        case 'navigate':
+          if (a.text) {
+            await page.goto(a.text, { waitUntil: 'networkidle2', timeout: 30000 });
+            results.push(`${i + 1}. Navigated to ${a.text}`);
+          }
+          break;
+      }
+      // Delay between actions
+      if (i < actions.length - 1) {
+        await new Promise(r => setTimeout(r, gap));
+      }
+    } catch (err) {
+      results.push(`${i + 1}. ERROR (${a.action}): ${err.message}`);
+      break; // Stop on first error
+    }
+  }
+
+  return { content: [{ type: 'text', text: results.join('\n') }] };
+});
+
 // Go back/forward
 server.tool('go_back', 'Go back in browser history', {
   pageId: z.number().describe('Page ID'),
