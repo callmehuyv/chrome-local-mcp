@@ -39,10 +39,127 @@ let browser = null;
 let pages = {};
 let pageCounter = 0;
 
+// Element reference system — maps ref IDs to element info per page
+const pageRefs = {};      // { pageId: { 'e1': { role, name, selector, ... }, ... } }
+const prevSnapshots = {}; // { pageId: lastSnapshotText } for incremental diffs
+let refCounter = 0;
+
 function getPage(pageId) {
   const page = pages[pageId];
   if (!page) throw new Error(`Page ${pageId} not found. Available: ${Object.keys(pages).join(', ')}`);
   return page;
+}
+
+// Build YAML-like snapshot from Puppeteer accessibility tree with element refs
+async function buildSnapshot(page, pageId) {
+  const snapshot = await page.accessibility.snapshot({ interestingOnly: true });
+  if (!snapshot) return { text: '(empty page)', refs: {} };
+
+  const refs = {};
+  refCounter = 0;
+  const lines = [];
+
+  function renderNode(node, indent = 0) {
+    const prefix = '  '.repeat(indent);
+    const role = node.role || 'generic';
+    const name = node.name || '';
+
+    // Assign ref to interactive elements
+    let refTag = '';
+    const interactable = [
+      'button', 'link', 'textbox', 'searchbox', 'combobox',
+      'checkbox', 'radio', 'switch', 'slider', 'spinbutton',
+      'tab', 'menuitem', 'option', 'treeitem',
+    ];
+    if (interactable.includes(role) || node.focused) {
+      const ref = 'e' + (++refCounter);
+      refTag = ` [ref=${ref}]`;
+      refs[ref] = { role, name, nodeInfo: node };
+    }
+
+    // Build state annotations
+    const states = [];
+    if (node.focused) states.push('focused');
+    if (node.checked === true) states.push('checked');
+    if (node.checked === 'mixed') states.push('mixed');
+    if (node.disabled) states.push('disabled');
+    if (node.expanded === true) states.push('expanded');
+    if (node.expanded === false) states.push('collapsed');
+    if (node.selected) states.push('selected');
+    if (node.required) states.push('required');
+    if (node.pressed) states.push('pressed');
+    const stateStr = states.length ? ` [${states.join(', ')}]` : '';
+
+    // Build the value display
+    let valueStr = '';
+    if (node.value !== undefined && node.value !== '') {
+      valueStr = `: "${node.value}"`;
+    }
+
+    // Render line
+    const nameStr = name ? ` "${name}"` : '';
+    lines.push(`${prefix}- ${role}${nameStr}${refTag}${stateStr}${valueStr}`);
+
+    // Recurse children
+    if (node.children) {
+      for (const child of node.children) {
+        renderNode(child, indent + 1);
+      }
+    }
+  }
+
+  renderNode(snapshot);
+  return { text: lines.join('\n'), refs };
+}
+
+// Resolve a ref to a DOM element handle
+async function resolveRef(page, pageId, ref) {
+  const refMap = pageRefs[pageId];
+  if (!refMap || !refMap[ref]) throw new Error(`Ref "${ref}" not found. Take a new snapshot first.`);
+
+  const info = refMap[ref];
+  const { role, name } = info;
+
+  // Build a selector strategy based on role + name
+  const el = await page.evaluateHandle(({ role, name }) => {
+    // Use ARIA role mapping to find the element
+    const roleToSelectors = {
+      button: ['button', 'input[type="button"]', 'input[type="submit"]', '[role="button"]'],
+      link: ['a[href]', '[role="link"]'],
+      textbox: ['input[type="text"]', 'input[type="email"]', 'input[type="password"]', 'input[type="search"]', 'input[type="tel"]', 'input[type="url"]', 'input:not([type])', 'textarea', '[role="textbox"]', '[contenteditable="true"]'],
+      searchbox: ['input[type="search"]', '[role="searchbox"]'],
+      combobox: ['select', '[role="combobox"]'],
+      checkbox: ['input[type="checkbox"]', '[role="checkbox"]'],
+      radio: ['input[type="radio"]', '[role="radio"]'],
+      switch: ['[role="switch"]'],
+      slider: ['input[type="range"]', '[role="slider"]'],
+      spinbutton: ['input[type="number"]', '[role="spinbutton"]'],
+      tab: ['[role="tab"]'],
+      menuitem: ['[role="menuitem"]', '[role="menuitemcheckbox"]', '[role="menuitemradio"]'],
+      option: ['option', '[role="option"]'],
+      treeitem: ['[role="treeitem"]'],
+    };
+
+    const selectors = roleToSelectors[role] || [`[role="${role}"]`];
+    for (const sel of selectors) {
+      const elements = [...document.querySelectorAll(sel)];
+      for (const el of elements) {
+        // Match by accessible name (text content, aria-label, label, placeholder, value)
+        const label = el.getAttribute('aria-label')
+          || el.getAttribute('placeholder')
+          || el.getAttribute('title')
+          || (el.labels && el.labels[0] && el.labels[0].textContent.trim())
+          || el.textContent.trim();
+        if (name && label && label.includes(name)) return el;
+        if (!name && el.offsetParent !== null) return el;
+      }
+    }
+    return null;
+  }, { role, name });
+
+  const element = el.asElement();
+  if (!element) throw new Error(`Could not find element for ref "${ref}" (${role} "${name}"). Page may have changed — take a new snapshot.`);
+  return element;
 }
 
 const server = new McpServer({
@@ -106,15 +223,20 @@ server.tool('navigate', 'Navigate to a URL', {
 });
 
 // Click
-server.tool('click', 'Click an element by selector, text, or coordinates', {
+server.tool('click', 'Click an element by ref (from snapshot), selector, text, or coordinates', {
   pageId: z.number().describe('Page ID'),
+  ref: z.string().optional().describe('Element ref from snapshot (e.g. "e1") — preferred method'),
   selector: z.string().optional().describe('CSS selector'),
   text: z.string().optional().describe('Click element containing this exact text'),
   x: z.number().optional().describe('X coordinate'),
   y: z.number().optional().describe('Y coordinate'),
-}, async ({ pageId, selector, text, x, y }) => {
+}, async ({ pageId, ref, selector, text, x, y }) => {
   const page = getPage(pageId);
-  if (x !== undefined && y !== undefined) {
+  if (ref) {
+    const element = await resolveRef(page, pageId, ref);
+    await element.click();
+    return { content: [{ type: 'text', text: `Clicked ref ${ref} (${pageRefs[pageId][ref].role} "${pageRefs[pageId][ref].name}")` }] };
+  } else if (x !== undefined && y !== undefined) {
     await page.mouse.click(x, y);
   } else if (text) {
     const el = await page.evaluateHandle((t) => {
@@ -127,7 +249,7 @@ server.tool('click', 'Click an element by selector, text, or coordinates', {
   } else if (selector) {
     await page.click(selector);
   } else {
-    throw new Error('Provide selector, text, or x/y coordinates');
+    throw new Error('Provide ref, selector, text, or x/y coordinates');
   }
   return { content: [{ type: 'text', text: 'Clicked' }] };
 });
@@ -157,6 +279,51 @@ server.tool('press_key', 'Press a keyboard key', {
   const page = getPage(pageId);
   await page.keyboard.press(key);
   return { content: [{ type: 'text', text: `Pressed ${key}` }] };
+});
+
+// Snapshot — accessibility tree with element refs (cheapest way to understand a page)
+server.tool('snapshot', 'Get page accessibility snapshot with element refs. Returns structured text — much cheaper than screenshots. Use refs with click/type/select tools.', {
+  pageId: z.number().describe('Page ID'),
+}, async ({ pageId }) => {
+  const page = getPage(pageId);
+  const url = page.url();
+  const title = await page.title();
+  const { text, refs } = await buildSnapshot(page, pageId);
+
+  // Store refs for this page
+  pageRefs[pageId] = refs;
+
+  const refCount = Object.keys(refs).length;
+  const header = `### Page\n- URL: ${url}\n- Title: ${title}\n\n### Snapshot (${refCount} interactive elements)\n`;
+  return { content: [{ type: 'text', text: header + text }] };
+});
+
+// Click by ref — use refs from snapshot for reliable element targeting
+server.tool('click_ref', 'Click an element by its ref from a snapshot (e.g. "e3"). More reliable than CSS selectors.', {
+  pageId: z.number().describe('Page ID'),
+  ref: z.string().describe('Element ref from snapshot (e.g. "e1", "e3")'),
+}, async ({ pageId, ref }) => {
+  const page = getPage(pageId);
+  const element = await resolveRef(page, pageId, ref);
+  await element.click();
+  return { content: [{ type: 'text', text: `Clicked ref ${ref} (${pageRefs[pageId][ref].role} "${pageRefs[pageId][ref].name}")` }] };
+});
+
+// Type by ref — type into an input identified by its ref
+server.tool('type_ref', 'Type text into an element by its ref from a snapshot. More reliable than CSS selectors.', {
+  pageId: z.number().describe('Page ID'),
+  ref: z.string().describe('Element ref from snapshot (e.g. "e1")'),
+  text: z.string().describe('Text to type'),
+  clear: z.boolean().optional().describe('Clear field first'),
+}, async ({ pageId, ref, text, clear }) => {
+  const page = getPage(pageId);
+  const element = await resolveRef(page, pageId, ref);
+  if (clear) {
+    await element.click({ clickCount: 3 });
+    await page.keyboard.press('Backspace');
+  }
+  await element.type(text, { delay: 50 });
+  return { content: [{ type: 'text', text: `Typed into ref ${ref} (${pageRefs[pageId][ref].role} "${pageRefs[pageId][ref].name}")` }] };
 });
 
 // Screenshot (with optional local OCR to save tokens)

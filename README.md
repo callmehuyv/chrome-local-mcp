@@ -41,8 +41,11 @@ Start a new Claude Code session. The `mcp__chrome_local__*` tools will be availa
 | `new_tab` | Open a new tab |
 | `list_pages` | List all open tabs with URLs and titles |
 | `navigate` | Navigate to a URL |
-| `click` | Click by CSS selector, text content, or x/y coordinates |
+| `snapshot` | Get page accessibility tree with element refs — cheapest way to understand a page (no vision tokens) |
+| `click` | Click by ref (from snapshot), CSS selector, text, or coordinates |
+| `click_ref` | Click an element by its ref from a snapshot |
 | `type` | Type text into an input field (with optional clear) |
+| `type_ref` | Type into an element by its ref from a snapshot |
 | `press_key` | Press a keyboard key (Enter, Tab, Escape, etc.) |
 | `screenshot` | Take a screenshot (returns image to Claude, or use `ocr: true` for local text extraction) |
 | `ocr` | Extract text from any image file using local Apple Vision OCR (no cloud tokens) |
@@ -137,6 +140,40 @@ curl -X POST http://localhost:3033/launch \
 ### Window Size
 
 Default window size is 1440x900. To change it, edit `mcp-server.js` and modify the `--window-size` arg in the `launch` tool.
+
+## Accessibility Snapshot (Recommended)
+
+The `snapshot` tool returns a structured accessibility tree of the page — the **cheapest and most reliable** way to understand page content. No screenshots, no vision tokens, no OCR needed.
+
+```
+> Take a snapshot of the page
+
+### Page
+- URL: https://example.com/
+- Title: Example Domain
+
+### Snapshot (1 interactive elements)
+- RootWebArea "Example Domain"
+  - heading "Example Domain"
+  - StaticText "This domain is for use in..."
+  - link "Learn more" [ref=e1]
+```
+
+Each interactive element gets a **ref** (e.g. `[ref=e1]`) that you can use to click or type:
+
+```
+> Click ref e1
+> Type "hello" into ref e3
+```
+
+**Cost comparison for understanding a page:**
+| Method | Token cost | Speed |
+|--------|-----------|-------|
+| `snapshot` | ~100-500 text tokens | Instant |
+| `screenshot` with `ocr: true` | ~500-2000 text tokens | ~1.4s (local) |
+| `screenshot` (image) | ~2000-5000 vision tokens | Instant |
+
+**Always try `snapshot` first.** Use screenshots only when you need visual context.
 
 ## Local OCR (macOS)
 
