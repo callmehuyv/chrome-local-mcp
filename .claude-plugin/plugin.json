@@ -1,0 +1,14 @@
+{
+  "name": "chrome-local-mcp",
+  "description": "Control a local Chrome browser from Claude Code — navigate, click, type, screenshot, OCR, and more. Powered by Puppeteer.",
+  "version": "1.0.0",
+  "author": {
+    "name": "callmehuyv"
+  },
+  "mcpServers": {
+    "chrome_local": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/mcp-server.js"]
+    }
+  }
+}

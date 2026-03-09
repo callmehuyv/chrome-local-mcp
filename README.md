@@ -17,6 +17,12 @@ Navigate pages, click elements, fill forms, take screenshots, extract text — a
 
 ## Install in 10 seconds
 
+**Claude Code Plugin (easiest):**
+```bash
+claude plugin install chrome-local-mcp
+```
+
+**Or via MCP:**
 ```bash
 claude mcp add chrome_local -- npx chrome-local-mcp@latest
 ```
@@ -72,22 +78,28 @@ Most browser MCPs (Playwright MCP, Chrome DevTools MCP) are built for general-pu
 
 ## Installation Options
 
-### Option A: npx (Recommended)
+### Option A: Claude Code Plugin (Recommended)
 
-No install needed. Just register with Claude Code:
+```bash
+claude plugin install chrome-local-mcp
+```
+
+One command. Auto-registered. You're done.
+
+### Option B: npx (no global install)
 
 ```bash
 claude mcp add chrome_local -- npx chrome-local-mcp@latest
 ```
 
-### Option B: Global install
+### Option C: Global install
 
 ```bash
 npm install -g chrome-local-mcp
 claude mcp add --scope user chrome_local chrome-local-mcp
 ```
 
-### Option C: From source
+### Option D: From source
 
 ```bash
 git clone https://github.com/callmehuyv/chrome-local-mcp.git
