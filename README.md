@@ -19,7 +19,7 @@ Navigate pages, click elements, fill forms, take screenshots, extract text — a
 
 ```bash
 claude plugin marketplace add callmehuyv/claude-plugins-marketplace
-claude plugin install chrome-local-mcp@moha-plugins
+claude plugin install chrome-local-mcp@callmehuyv-plugins
 ```
 
 Restart Claude Code. Done. The `mcp__chrome_local__*` tools are ready.
@@ -77,7 +77,7 @@ Most browser MCPs (Playwright MCP, Chrome DevTools MCP) are built for general-pu
 
 ```bash
 claude plugin marketplace add callmehuyv/claude-plugins-marketplace
-claude plugin install chrome-local-mcp@moha-plugins
+claude plugin install chrome-local-mcp@callmehuyv-plugins
 ```
 
 Two commands. Auto-registered. You're done.
