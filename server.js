@@ -1,305 +1,193 @@
 const express = require('express');
-const puppeteer = require('puppeteer');
-const path = require('path');
-const os = require('os');
+const { BrowserManager, CONFIG } = require('./browser-manager');
 
-const USER_DATA_DIR = path.join(os.homedir(), '.chrome-local-mcp-profile');
-
+const mgr = new BrowserManager();
 const app = express();
 app.use(express.json({ limit: '10mb' }));
 
-let browser = null;
-let pages = {}; // pageId -> page instance
-let pageCounter = 0;
+// Helper: wrap async route handlers with error handling
+function route(fn) {
+  return async (req, res) => {
+    try {
+      await fn(req, res);
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  };
+}
 
-// Launch browser
-async function launchBrowser(headless = false) {
-  if (browser) {
-    try { await browser.close(); } catch (_) {}
+// --- Browser lifecycle ---
+
+app.post('/launch', route(async (req, res) => {
+  const { headless } = req.body || {};
+  const pageId = await mgr.launch(headless);
+  res.json({ ok: true, pageId, message: 'Browser launched' });
+}));
+
+app.post('/close', route(async (req, res) => {
+  await mgr.close();
+  res.json({ ok: true, message: 'Browser closed' });
+}));
+
+app.post('/page/new', route(async (req, res) => {
+  const pageId = await mgr.newTab();
+  res.json({ ok: true, pageId });
+}));
+
+app.get('/pages', route(async (req, res) => {
+  const list = await mgr.listPages();
+  res.json({ ok: true, pages: list });
+}));
+
+// --- Navigation ---
+
+app.post('/navigate', route(async (req, res) => {
+  const { pageId, url, waitUntil } = req.body;
+  const page = mgr.getPage(pageId);
+  await page.goto(url, { waitUntil: waitUntil || 'networkidle2', timeout: CONFIG.NAVIGATION_TIMEOUT });
+  res.json({ ok: true, url: page.url(), title: await page.title() });
+}));
+
+// --- Interaction ---
+
+app.post('/click', route(async (req, res) => {
+  const { pageId, selector, text, x, y } = req.body;
+  const page = mgr.getPage(pageId);
+  if (x !== undefined && y !== undefined) {
+    await page.mouse.click(x, y);
+  } else if (text) {
+    const el = await page.evaluateHandle((t) => {
+      const elements = [...document.querySelectorAll('*')];
+      return elements.find(e => e.textContent.trim() === t && e.offsetParent !== null);
+    }, text);
+    const element = el.asElement();
+    if (!element) throw new Error(`No element with text "${text}" found`);
+    await element.click();
+  } else {
+    await page.click(selector);
   }
-  browser = await puppeteer.launch({
-    headless: headless ? 'new' : false,
-    defaultViewport: null,
-    userDataDir: USER_DATA_DIR,
-    args: ['--window-size=1440,900', '--no-sandbox'],
+  res.json({ ok: true });
+}));
+
+app.post('/type', route(async (req, res) => {
+  const { pageId, selector, text, delay, clear } = req.body;
+  const page = mgr.getPage(pageId);
+  if (clear) await mgr.clearField(page, selector);
+  await page.type(selector, text, { delay: delay || CONFIG.DEFAULT_TYPING_DELAY });
+  res.json({ ok: true });
+}));
+
+app.post('/key', route(async (req, res) => {
+  const { pageId, key } = req.body;
+  const page = mgr.getPage(pageId);
+  await page.keyboard.press(key);
+  res.json({ ok: true });
+}));
+
+// --- Screenshots ---
+
+app.post('/screenshot', route(async (req, res) => {
+  const { pageId, path, fullPage } = req.body;
+  const page = mgr.getPage(pageId);
+  const filePath = path || `/tmp/screenshot-${Date.now()}.png`;
+  await page.screenshot({ path: filePath, fullPage: fullPage || false });
+  res.json({ ok: true, path: filePath });
+}));
+
+// --- Inspection ---
+
+app.post('/text', route(async (req, res) => {
+  const { pageId, selector } = req.body;
+  const page = mgr.getPage(pageId);
+  const text = selector
+    ? await page.$eval(selector, el => el.textContent)
+    : await page.evaluate(() => document.body.innerText);
+  res.json({ ok: true, text });
+}));
+
+app.post('/html', route(async (req, res) => {
+  const { pageId, selector } = req.body;
+  const page = mgr.getPage(pageId);
+  const html = selector
+    ? await page.$eval(selector, el => el.outerHTML)
+    : await page.content();
+  res.json({ ok: true, html });
+}));
+
+app.post('/eval', route(async (req, res) => {
+  const { pageId, script } = req.body;
+  const page = mgr.getPage(pageId);
+  const result = await page.evaluate(script);
+  res.json({ ok: true, result });
+}));
+
+// --- Waiting ---
+
+app.post('/wait', route(async (req, res) => {
+  const { pageId, selector, timeout, visible } = req.body;
+  const page = mgr.getPage(pageId);
+  await page.waitForSelector(selector, {
+    timeout: timeout || CONFIG.WAIT_TIMEOUT,
+    visible: visible !== false,
   });
-  pages = {};
-  pageCounter = 0;
-  const [defaultPage] = await browser.pages();
-  const id = ++pageCounter;
-  pages[id] = defaultPage;
-  return id;
-}
+  res.json({ ok: true });
+}));
 
-// Get or throw page
-function getPage(pageId) {
-  const page = pages[pageId];
-  if (!page) throw new Error(`Page ${pageId} not found. Available: ${Object.keys(pages).join(', ')}`);
-  return page;
-}
+app.post('/wait-navigation', route(async (req, res) => {
+  const { pageId, timeout } = req.body;
+  const page = mgr.getPage(pageId);
+  await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: timeout || CONFIG.NAVIGATION_TIMEOUT });
+  res.json({ ok: true, url: page.url(), title: await page.title() });
+}));
 
-// --- Routes ---
+// --- Form elements ---
 
-// Launch browser
-app.post('/launch', async (req, res) => {
-  try {
-    const { headless } = req.body || {};
-    const pageId = await launchBrowser(headless);
-    res.json({ ok: true, pageId, message: 'Browser launched' });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
+app.post('/select', route(async (req, res) => {
+  const { pageId, selector, value } = req.body;
+  const page = mgr.getPage(pageId);
+  await page.select(selector, value);
+  res.json({ ok: true });
+}));
 
-// Close browser
-app.post('/close', async (req, res) => {
-  try {
-    if (browser) { await browser.close(); browser = null; pages = {}; }
-    res.json({ ok: true, message: 'Browser closed' });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
+app.post('/scroll', route(async (req, res) => {
+  const { pageId, x, y } = req.body;
+  const page = mgr.getPage(pageId);
+  await page.evaluate((sx, sy) => window.scrollBy(sx, sy), x || 0, y || CONFIG.DEFAULT_SCROLL_Y);
+  res.json({ ok: true });
+}));
 
-// Create new page/tab
-app.post('/page/new', async (req, res) => {
-  try {
-    if (!browser) return res.status(400).json({ ok: false, error: 'Browser not launched' });
-    const page = await browser.newPage();
-    const id = ++pageCounter;
-    pages[id] = page;
-    res.json({ ok: true, pageId: id });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
+app.post('/links', route(async (req, res) => {
+  const { pageId } = req.body;
+  const page = mgr.getPage(pageId);
+  const links = await page.evaluate(() =>
+    [...document.querySelectorAll('a[href]')].map(a => ({ text: a.textContent.trim(), href: a.href }))
+  );
+  res.json({ ok: true, links });
+}));
 
-// List pages
-app.get('/pages', async (req, res) => {
-  try {
-    const list = [];
-    for (const [id, page] of Object.entries(pages)) {
-      list.push({ pageId: Number(id), url: page.url(), title: await page.title() });
-    }
-    res.json({ ok: true, pages: list });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
+app.post('/inputs', route(async (req, res) => {
+  const { pageId } = req.body;
+  const page = mgr.getPage(pageId);
+  const inputs = await page.evaluate(() =>
+    [...document.querySelectorAll('input, select, textarea')].map(el => ({
+      tag: el.tagName.toLowerCase(),
+      type: el.type,
+      name: el.name,
+      id: el.id,
+      placeholder: el.placeholder,
+      value: el.value,
+    }))
+  );
+  res.json({ ok: true, inputs });
+}));
 
-// Navigate
-app.post('/navigate', async (req, res) => {
-  try {
-    const { pageId, url, waitUntil } = req.body;
-    const page = getPage(pageId);
-    await page.goto(url, { waitUntil: waitUntil || 'networkidle2', timeout: 30000 });
-    res.json({ ok: true, url: page.url(), title: await page.title() });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
+// --- Health ---
 
-// Click
-app.post('/click', async (req, res) => {
-  try {
-    const { pageId, selector, text, x, y } = req.body;
-    const page = getPage(pageId);
-    if (x !== undefined && y !== undefined) {
-      await page.mouse.click(x, y);
-    } else if (text) {
-      // Click element containing text
-      const el = await page.evaluateHandle((t) => {
-        const elements = [...document.querySelectorAll('*')];
-        return elements.find(e => e.textContent.trim() === t && e.offsetParent !== null);
-      }, text);
-      if (!el) throw new Error(`No element with text "${text}" found`);
-      await el.asElement().click();
-    } else {
-      await page.click(selector);
-    }
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
-// Type
-app.post('/type', async (req, res) => {
-  try {
-    const { pageId, selector, text, delay, clear } = req.body;
-    const page = getPage(pageId);
-    if (clear) {
-      await page.click(selector, { clickCount: 3 });
-      await page.keyboard.press('Backspace');
-    }
-    await page.type(selector, text, { delay: delay || 50 });
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
-// Press key
-app.post('/key', async (req, res) => {
-  try {
-    const { pageId, key } = req.body;
-    const page = getPage(pageId);
-    await page.keyboard.press(key);
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
-// Screenshot
-app.post('/screenshot', async (req, res) => {
-  try {
-    const { pageId, path, fullPage } = req.body;
-    const page = getPage(pageId);
-    const filePath = path || `/tmp/screenshot-${Date.now()}.png`;
-    await page.screenshot({ path: filePath, fullPage: fullPage || false });
-    res.json({ ok: true, path: filePath });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
-// Get page text content
-app.post('/text', async (req, res) => {
-  try {
-    const { pageId, selector } = req.body;
-    const page = getPage(pageId);
-    let text;
-    if (selector) {
-      text = await page.$eval(selector, el => el.textContent);
-    } else {
-      text = await page.evaluate(() => document.body.innerText);
-    }
-    res.json({ ok: true, text });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
-// Get page HTML
-app.post('/html', async (req, res) => {
-  try {
-    const { pageId, selector } = req.body;
-    const page = getPage(pageId);
-    let html;
-    if (selector) {
-      html = await page.$eval(selector, el => el.outerHTML);
-    } else {
-      html = await page.content();
-    }
-    res.json({ ok: true, html });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
-// Execute JavaScript on page
-app.post('/eval', async (req, res) => {
-  try {
-    const { pageId, script } = req.body;
-    const page = getPage(pageId);
-    const result = await page.evaluate(script);
-    res.json({ ok: true, result });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
-// Wait for selector
-app.post('/wait', async (req, res) => {
-  try {
-    const { pageId, selector, timeout, visible } = req.body;
-    const page = getPage(pageId);
-    await page.waitForSelector(selector, {
-      timeout: timeout || 10000,
-      visible: visible !== false,
-    });
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
-// Wait for navigation
-app.post('/wait-navigation', async (req, res) => {
-  try {
-    const { pageId, timeout } = req.body;
-    const page = getPage(pageId);
-    await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: timeout || 30000 });
-    res.json({ ok: true, url: page.url(), title: await page.title() });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
-// Select dropdown
-app.post('/select', async (req, res) => {
-  try {
-    const { pageId, selector, value } = req.body;
-    const page = getPage(pageId);
-    await page.select(selector, value);
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
-// Scroll
-app.post('/scroll', async (req, res) => {
-  try {
-    const { pageId, x, y } = req.body;
-    const page = getPage(pageId);
-    await page.evaluate((sx, sy) => window.scrollBy(sx, sy), x || 0, y || 500);
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
-// Get all links on page
-app.post('/links', async (req, res) => {
-  try {
-    const { pageId } = req.body;
-    const page = getPage(pageId);
-    const links = await page.evaluate(() =>
-      [...document.querySelectorAll('a[href]')].map(a => ({ text: a.textContent.trim(), href: a.href }))
-    );
-    res.json({ ok: true, links });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
-// Get form inputs
-app.post('/inputs', async (req, res) => {
-  try {
-    const { pageId } = req.body;
-    const page = getPage(pageId);
-    const inputs = await page.evaluate(() =>
-      [...document.querySelectorAll('input, select, textarea')].map(el => ({
-        tag: el.tagName.toLowerCase(),
-        type: el.type,
-        name: el.name,
-        id: el.id,
-        placeholder: el.placeholder,
-        value: el.value,
-      }))
-    );
-    res.json({ ok: true, inputs });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
-// Health check
 app.get('/health', (req, res) => {
-  res.json({ ok: true, browserRunning: !!browser, pages: Object.keys(pages).length });
+  res.json({ ok: true, browserRunning: !!mgr.browser, pages: Object.keys(mgr.pages).length });
 });
+
+// --- Start ---
 
 const PORT = process.env.PORT || 3033;
 app.listen(PORT, () => {

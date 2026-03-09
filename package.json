@@ -1,14 +1,15 @@
 {
   "name": "chrome-local-mcp",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "A local Chrome browser automation MCP server powered by Puppeteer for Claude Code",
   "main": "mcp-server.js",
   "bin": {
-    "chrome-local-mcp": "./mcp-server.js"
+    "chrome-local-mcp": "mcp-server.js"
   },
   "scripts": {
     "start": "node mcp-server.js",
-    "server": "node server.js"
+    "server": "node server.js",
+    "postinstall": "echo 'chrome-local-mcp installed. Add to Claude Code with: claude mcp add chrome_local node node_modules/chrome-local-mcp/mcp-server.js'"
   },
   "keywords": [
     "mcp",
@@ -16,11 +17,28 @@
     "chrome",
     "browser-automation",
     "claude-code",
+    "claude-code-plugin",
     "model-context-protocol"
   ],
   "author": "callmehuyv",
   "license": "MIT",
   "type": "commonjs",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/callmehuyv/chrome-local-mcp.git"
+  },
+  "homepage": "https://github.com/callmehuyv/chrome-local-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/callmehuyv/chrome-local-mcp/issues"
+  },
+  "files": [
+    "browser-manager.js",
+    "mcp-server.js",
+    "server.js",
+    ".claude-plugin/",
+    "README.md",
+    "LICENSE"
+  ],
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",
     "express": "^5.2.1",
