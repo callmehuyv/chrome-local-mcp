@@ -1,6 +1,6 @@
 {
   "name": "chrome-local-mcp",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "A local Chrome browser automation MCP server powered by Puppeteer for Claude Code",
   "main": "mcp-server.js",
   "bin": {
