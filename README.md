@@ -17,19 +17,14 @@ Navigate pages, click elements, fill forms, take screenshots, extract text — a
 
 ## Install in 10 seconds
 
-**Claude Code Plugin (easiest):**
 ```bash
-claude plugin install chrome-local-mcp
-```
-
-**Or via MCP:**
-```bash
-claude mcp add chrome_local -- npx chrome-local-mcp@latest
+claude plugin marketplace add callmehuyv/claude-plugins-marketplace
+claude plugin install chrome-local-mcp@moha-plugins
 ```
 
 Restart Claude Code. Done. The `mcp__chrome_local__*` tools are ready.
 
-> **That's it.** No global install, no config files, no browser flags. Just one command.
+> **That's it.** No global install, no config files, no browser flags.
 
 ---
 
@@ -81,10 +76,11 @@ Most browser MCPs (Playwright MCP, Chrome DevTools MCP) are built for general-pu
 ### Option A: Claude Code Plugin (Recommended)
 
 ```bash
-claude plugin install chrome-local-mcp
+claude plugin marketplace add callmehuyv/claude-plugins-marketplace
+claude plugin install chrome-local-mcp@moha-plugins
 ```
 
-One command. Auto-registered. You're done.
+Two commands. Auto-registered. You're done.
 
 ### Option B: npx (no global install)
 
